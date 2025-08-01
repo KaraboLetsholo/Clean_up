@@ -1163,6 +1163,13 @@ class Clean_up(MultiAgentEnv):
             return state
 
 
+        def gini_index(rewards):
+            """Calculate Gini coefficient for reward inequality."""
+            rewards = jnp.sort(rewards.flatten())
+            n = len(rewards)
+            index = jnp.arange(1, n + 1)
+            return (2 * jnp.sum(index * rewards)) / (n * jnp.sum(rewards)) - (n + 1) / n
+
         def _step(
             key: chex.PRNGKey,
             state: State,
@@ -1368,6 +1375,7 @@ class Clean_up(MultiAgentEnv):
                 info = {
                     "original_rewards": original_rewards.squeeze(),
                     "shaped_rewards": rewards.squeeze(),
+                    "gini_index": gini_index(original_rewards),
                 }
             elif self.inequity_aversion:
                 rewards = jnp.zeros((self.num_agents, 1))
@@ -1381,12 +1389,14 @@ class Clean_up(MultiAgentEnv):
                     "original_rewards": original_rewards.squeeze(),
                     "smooth_rewards": state.smooth_rewards.squeeze(),
                     "shaped_rewards": rewards.squeeze(),
+                    "gini_index": gini_index(original_rewards),
                 }
                 else:
                     rewards,disadvantageous,advantageous = self.get_inequity_aversion_rewards_immediate(original_rewards, self.inequity_aversion_target_agents, state.inner_t, self.inequity_aversion_alpha, self.inequity_aversion_beta)
                     info = {
                     "original_rewards": original_rewards.squeeze(),
                     "shaped_rewards": rewards.squeeze(),
+                    "gini_index": gini_index(original_rewards),
                 }
             elif self.svo:
                 rewards = jnp.zeros((self.num_agents, 1))
@@ -1396,11 +1406,15 @@ class Clean_up(MultiAgentEnv):
                     "original_rewards": original_rewards.squeeze(),
                     "svo_theta": theta.squeeze(),
                     "shaped_rewards": rewards.squeeze(),
+                    "gini_index": gini_index(original_rewards),
                 }
             else:
                 rewards = jnp.zeros((self.num_agents, 1))
-                rewards = jnp.where(apple_matches, 1, rewards) * self.num_agents
-                info = {}
+                original_rewards = jnp.where(apple_matches, 1, rewards) * self.num_agents
+                rewards = original_rewards
+                info = {
+                    "gini_index": gini_index(original_rewards),
+                }
             
             info["clean_action_info"] = jnp.where(actions == Actions.zap_clean, 1, 0).squeeze()
             info["cleaned_water"] = jnp.array([len(state.potential_dirt_and_dirt_label) - dirtCount] * self.num_agents).squeeze() 
