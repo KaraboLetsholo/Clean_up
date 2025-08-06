@@ -53,14 +53,14 @@ CONFIG = {
     "NUM_SEEDS": 1,
     "TUNE": False,
 
-    "REWARD": "common", # individual; common NOTE: this does nothing. Change above.
+    "REWARD": "individual", # individual; common NOTE: this does nothing. Change above.
     "GIF_NUM_FRAMES": 250,
     "PARAMETER_SHARING": True,
     # WandB Params
     "ENTITY": "",
     "PROJECT": "socialjax",
     "WANDB_MODE" : "online",
-    "WANDB_TAGS": ["common_reward"],
+    "WANDB_TAGS": ["individual_reward"],
 }
 
 class CNN(nn.Module):
@@ -322,11 +322,11 @@ def make_train(config):
 
                 # current_timestep = update_step*config["NUM_STEPS"]*config["NUM_ENVS"]
                 # shaped_reward = compute_grouped_rewards(reward)
-                # reward = jax.tree_map(lambda x,y: x*rew_shaping_anneal_org(current_timestep)+y*rew_shaping_anneal(current_timestep), reward, shaped_reward)
+                # reward = jax.tree_util.tree_map(lambda x,y: x*rew_shaping_anneal_org(current_timestep)+y*rew_shaping_anneal(current_timestep), reward, shaped_reward)
 
                 
                 if config["PARAMETER_SHARING"]:
-                    info = jax.tree_map(lambda x: x.reshape((config["NUM_ACTORS"])), info)
+                    info = jax.tree_util.tree_map(lambda x: x.reshape((config["NUM_ACTORS"])), info)
                     transition = Transition(
                         batchify_dict(done, env.agents, config["NUM_ACTORS"]).squeeze(),
                         action,
@@ -340,7 +340,7 @@ def make_train(config):
                     transition = []
                     done = [v for v in done.values()]
                     for i in range(env.num_agents):
-                        info_i = {key: jax.tree_map(lambda x: x.reshape((config["NUM_ACTORS"]),1), value[:,i]) for key, value in info.items()}
+                        info_i = {key: jax.tree_util.tree_map(lambda x: x.reshape((config["NUM_ACTORS"]),1), value[:,i]) for key, value in info.items()}
                         transition.append(Transition(
                             done[i],
                             env_act[i],
@@ -520,11 +520,27 @@ def make_train(config):
                     metric.append(metric_i)
                     rng = update_state[-1]
                 
+            # def callback(metric):
+            #     wandb.log(metric)
             def callback(metric):
+                # convert to float outside JAX tracing
+                if isinstance(metric["gini_index"], jnp.ndarray):
+                    try:
+                        metric["gini_index"] = float(jnp.mean(metric["gini_index"]))
+                        metric["utilatarian_wellfare"] = float(jnp.mean(metric["utilatarian_wellfare"]))
+                        metric["nash_wellfare"] = float(jnp.mean(metric["nash_wellfare"]))
+                        #print("Raw Gini Index:", metric["gini_index"])
+                    except:
+                        print("Could not reduce gini_index")
+
                 wandb.log(metric)
 
+
             update_step = update_step + 1
-            metric = jax.tree_map(lambda x: x.mean(), metric)
+            # print("Metric keys:", metric.keys())
+            # print("Gini Index in Metric:", metric["gini_index"])
+
+            metric = jax.tree_util.tree_map(lambda x: x.mean(), metric)
             if config["PARAMETER_SHARING"]:
                 metric["update_step"] = update_step
                 metric["env_step"] = update_step * config["NUM_STEPS"] * config["NUM_ENVS"]
@@ -538,9 +554,11 @@ def make_train(config):
             metric["update_step"] = update_step
             metric["env_step"] = update_step * config["NUM_STEPS"] * config["NUM_ENVS"]
             metric["clean_action_info"] = metric["clean_action_info"] * config["ENV_KWARGS"]["num_inner_steps"]
-
+            # metric["gini_index"] = metric["gini_index"] * config["ENV_KWARGS"]["num_inner_steps"]
+            # metric["gini_index"] = metric["gini_index"].mean()
+            # metric["gini_index"] = jnp.mean(metric["gini_index"]) 
             jax.debug.callback(callback, metric)
-
+            
             runner_state = (train_state, env_state, last_obs, update_step, rng)
             return runner_state, metric
 
@@ -574,7 +592,7 @@ def single_run(config):
 
     print("** Saving Results **")
     filename = f'{config["ENV_NAME"]}_seed{config["SEED"]}'
-    train_state = jax.tree_map(lambda x: x[0], out["runner_state"][0])
+    train_state = jax.tree_util.tree_map(lambda x: x[0], out["runner_state"][0])
     save_path = f"./checkpoints/individual/{filename}.pkl"
     if config["PARAMETER_SHARING"]:
         save_path = f"./checkpoints/indvidual/{filename}.pkl"
@@ -741,7 +759,7 @@ def tune(default_config):
         rngs = jax.random.split(rng, config["NUM_SEEDS"])
         train_vjit = jax.jit(jax.vmap(make_train(config)))
         outs = jax.block_until_ready(train_vjit(rngs))
-        train_state = jax.tree_map(lambda x: x[0], outs["runner_state"][0])
+        train_state = jax.tree_util.tree_map(lambda x: x[0], outs["runner_state"][0])
 
         # Evaluate and log
         # params = load_params(train_state.params)

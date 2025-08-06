@@ -1357,17 +1357,53 @@ class Clean_up(MultiAgentEnv):
             new_re_locs = jnp.where(reborn_players.any(), new_re_locs, state.agent_locs)
             state = state.replace(reborn_locs=new_re_locs)
 
+            #gini index
+            # def gini(x: jnp.ndarray) -> float:
+            #     x = jnp.sort(x)
+            #     n = x.shape[0]
+            #     index = jnp.arange(1, n + 1)
+            #     return (2 * jnp.sum(index * x) / (n * jnp.sum(x))) - (n + 1) / n
+            def gini(x: jnp.ndarray) -> float:
+                """Compute the Gini index for a 1D array."""
+                x = jnp.sort(x.flatten())
+                n = x.shape[0]
+                total = jnp.sum(x)
+                return jnp.where(
+                    total == 0,
+                    0.0,
+                    jnp.sum((2 * jnp.arange(1, n + 1) - n - 1) * x) / (n * total)
+                )
+
+
+            # rewards
             if self.shared_rewards:
                 rewards = jnp.zeros((self.num_agents, 1))
                 original_rewards = jnp.where(apple_matches, 1, rewards)
+                gini_score = gini(original_rewards)
+                welfare_score = jnp.sum(original_rewards)
+                r_clipped = jnp.clip(original_rewards, a_min=1e-6)
+                nash_wellfare_score = jnp.sum(jnp.log(r_clipped))
+                #nash_wellfare_score = jnp.sum(jnp.log(original_rewards + 1e-2))
 
                 rewards_sum_all_agents = jnp.zeros((self.num_agents, 1))
+                gini_index = jnp.zeros((self.num_agents, 1))
+                welfare = jnp.zeros((self.num_agents, 1))
+                nash_wellfare = jnp.zeros((self.num_agents, 1))
+                
                 rewards_sum = jnp.sum(original_rewards)
                 rewards_sum_all_agents += rewards_sum
+                gini_index += gini_score
+                welfare += welfare_score
+                nash_wellfare +=  nash_wellfare_score
+
                 rewards = rewards_sum_all_agents
+                # print("Gini Index:", gini_index, "Shape:", gini_index.shape)
                 info = {
                     "original_rewards": original_rewards.squeeze(),
                     "shaped_rewards": rewards.squeeze(),
+                    "gini_index": gini_index.squeeze(),
+                    "utilatarian_wellfare" : welfare.squeeze(),
+                    "nash_wellfare" : nash_wellfare.squeeze(),
                 }
             elif self.inequity_aversion:
                 rewards = jnp.zeros((self.num_agents, 1))
@@ -1428,7 +1464,7 @@ class Clean_up(MultiAgentEnv):
             state_re = _reset_state(key)
 
             state_re = state_re.replace(outer_t=outer_t + 1)
-            state = jax.tree_map(
+            state = jax.tree_util.tree_map(
                 lambda x, y: jnp.where(reset_inner, x, y),
                 state_re,
                 state_nxt,
